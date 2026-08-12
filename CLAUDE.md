@@ -1,6 +1,6 @@
 # zmk-build - Claude Code Instructions
 
-Universal rules live in `~/.claude/CLAUDE.md`, shell conventions in `~/dev/standards/shell.md`.
+Universal rules live in `~/.claude/CLAUDE.md`, shell conventions in `standards/shell.md`.
 Neither is restated here.
 
 ## Dev vs installed
