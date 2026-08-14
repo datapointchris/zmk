@@ -480,9 +480,16 @@ check_file() {
   fi
 }
 
-# The check that earns this verb. The drawer yaml is hand-written, so a layer
-# added to the keymap does not reach the drawing and nothing says so — the SVG
-# renders cleanly, one layer short.
+# The check that earns this verb. The drawer yaml is hand-written, so a change to
+# the keymap does not reach the drawing and nothing says so — the SVG renders
+# cleanly and wrong.
+#
+# Comparing layer counts is not enough: a key drawn as transparent, or a &none
+# drawn as ▽, leaves the count identical. So this compares every cell by class —
+# none, transparent, or a key — and reports each position that disagrees. Labels
+# are not comparable, since the drawing deliberately says ZOOM where the keymap
+# says &tmux_zoom. A {type: held} cell is the drawing marking its own activation
+# key and matches whatever the keymap has there.
 check_layer_drift() {
   local keymap="$1" yaml="$2"
 
@@ -490,18 +497,81 @@ check_layer_drift() {
     return
   fi
 
-  local in_keymap in_yaml
-  in_keymap=$(grep -c 'display-name' "$keymap" || true)
-  in_yaml=$(yq '.layers | length' "$yaml" 2>/dev/null || echo 0)
-
-  if [[ "$in_keymap" == "$in_yaml" ]]; then
-    print_success "layers in sync ($in_keymap)"
+  local layers_json findings
+  layers_json=$(mktemp "/tmp/zmk-layers-XXXX.json")
+  if ! yq -o=json '.layers' "$yaml" >"$layers_json" 2>/dev/null; then
+    rm -f "$layers_json"
+    check_fail "$yaml has no readable .layers"
     return
   fi
 
-  check_fail "layer drift — $keymap has $in_keymap, $yaml has $in_yaml"
-  print_info "  keymap: $(grep -o 'display-name = "[^"]*"' "$keymap" | sed 's/.*"\(.*\)"/\1/' | tr '\n' ' ')"
-  print_info "  drawn:  $(yq -r '.layers | keys | join(" ")' "$yaml" 2>/dev/null || echo '?')"
+  findings=$(
+    python3 - "$keymap" "$layers_json" <<'PY'
+import json, re, sys
+
+blocks = re.findall(
+    r'display-name = "([^"]+)";\s*bindings = <(.*?)>;',
+    open(sys.argv[1]).read(),
+    re.S,
+)
+layers = json.load(open(sys.argv[2]))
+
+if len(blocks) != len(layers):
+    print(f"count\t{len(blocks)}\t{len(layers)}")
+    raise SystemExit
+
+def km_class(token):
+    if token.startswith("none"):
+        return "none"
+    if token.startswith("trans"):
+        return "transparent"
+    return "a key"
+
+def drawn_class(cell):
+    if isinstance(cell, dict):
+        return "held" if cell.get("type") == "held" else "a key"
+    if cell == "":
+        return "none"
+    return "transparent" if cell == "▽" else "a key"
+
+for (_, body), (name, rows) in zip(blocks, layers.items()):
+    km = [t.strip() for t in body.split("&") if t.strip()]
+    drawn = [cell for row in rows for cell in row]
+    if len(km) != len(drawn):
+        print(f"size\t{name}\t{len(km)}\t{len(drawn)}")
+        continue
+    for position, (behavior, cell) in enumerate(zip(km, drawn)):
+        shown = drawn_class(cell)
+        if shown == "held":
+            continue
+        declared = km_class(behavior)
+        if declared != shown:
+            print(f"cell\t{name}\t{position}\t&{behavior.split()[0]}\t{declared}\t{shown}")
+PY
+  ) || {
+    rm -f "$layers_json"
+    check_fail "could not compare $keymap against $yaml"
+    return
+  }
+  rm -f "$layers_json"
+
+  if [[ -z "$findings" ]]; then
+    print_success "$(yq '.layers | length' "$yaml") layers, every key agrees with the keymap"
+    return
+  fi
+
+  local kind layer position behavior declared shown
+  while IFS=$'\t' read -r kind layer position behavior declared shown; do
+    case "$kind" in
+      count)
+        check_fail "layer drift — keymap has $layer, drawing has $position"
+        print_info "  keymap: $(grep -o 'display-name = "[^"]*"' "$keymap" | sed 's/.*"\(.*\)"/\1/' | tr '\n' ' ')"
+        print_info "  drawn:  $(yq -r '.layers | keys | join(" ")' "$yaml" 2>/dev/null || echo '?')"
+        ;;
+      size) check_fail "$layer: keymap has $position keys, drawing has $behavior" ;;
+      cell) check_fail "$layer position $position: keymap $behavior is $declared, drawing shows $shown" ;;
+    esac
+  done <<<"$findings"
 }
 
 cmd_check() {
