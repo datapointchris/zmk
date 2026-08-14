@@ -1,0 +1,851 @@
+#!/usr/bin/env bash
+# zmk - ZMK keyboard config tool
+#
+# Builds, draws, checks and flashes ZMK firmware for a keyboard config repo,
+# reading build.yaml from the current directory in the standard ZMK GitHub
+# Actions format.
+
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+if [[ -L "$SCRIPT_PATH" ]]; then
+  SCRIPT_PATH="$(python3 -c "import os; print(os.path.realpath('$SCRIPT_PATH'))")"
+fi
+ZMK_APP_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+
+# The help grammar lives in the dotfiles shell libraries, which is where every
+# tool in the fleet gets it from.
+if [[ -f "$HOME/.local/shell/formatting.sh" ]]; then
+  source "$HOME/.local/shell/formatting.sh"
+elif [[ -f "$HOME/dotfiles/configs/common/.local/shell/formatting.sh" ]]; then
+  source "$HOME/dotfiles/configs/common/.local/shell/formatting.sh"
+else
+  echo "zmk: cannot find formatting.sh in ~/.local/shell or a dotfiles checkout" >&2
+  exit 1
+fi
+
+# Sourced if present rather than required, so an installation predating this
+# dependency still runs every command it ran before.
+BASHSELFUPDATE_LOAD="${XDG_LIB_HOME:-$HOME/.local/lib}/bashselfupdate/load.bash"
+if [[ -f "$BASHSELFUPDATE_LOAD" ]]; then
+  source "$BASHSELFUPDATE_LOAD"
+fi
+
+# A west workspace is a rebuildable checkout, so it is cache rather than data.
+# It also had to move: ~/.local/share/zmk is where this tool's own clone now
+# installs, and the installer removes a non-repo directory it finds there.
+ZMK_WORKSPACE_BASE="${XDG_CACHE_HOME:-$HOME/.cache}/zmk"
+ZMK_LEGACY_WORKSPACE_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/zmk"
+ZMK_WORKSPACE="${ZMK_WORKSPACE:-${ZMK_WORKSPACE_BASE}/$(basename "$(pwd)")}"
+DOCKER_IMAGE="zmkfirmware/zmk-build-arm:stable"
+BUILD_YAML="build.yaml"
+CONFIG_DIR="config"
+DRAWER_CONFIG="keymap_drawer.config.yaml"
+ALIGN_CONFIG="keymap_align.toml"
+
+CONTAINER_WORKSPACE="/workspaces/zmk"
+CONTAINER_CONFIG="/workspaces/zmk/config"
+CONTAINER_OUTPUT="/workspaces/output"
+
+# Not managed by west — bind-mounted straight into the container, so edits take
+# effect without a push/pull cycle. CI has no bind-mount and resolves the module
+# through config/west.yml, which is why a shared change is pushed first.
+ZMK_SHARED_DIR="${ZMK_SHARED_DIR:-$(dirname "$(pwd)")/shared}"
+CONTAINER_SHARED="$CONTAINER_WORKSPACE/zmk-shared"
+
+get_version() {
+  git -C "$ZMK_APP_DIR" describe --tags --always 2>/dev/null || echo "dev"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Repo layout
+#
+# Every path below the repo root derives from the keymap's stem, so a config
+# repo declares its name once by naming its keymap. `zmk check` is what enforces
+# that there is exactly one, since two would make every derived path ambiguous.
+# ─────────────────────────────────────────────────────────────────────────────
+
+get_stem() {
+  local matches=("$CONFIG_DIR"/*.keymap)
+
+  if [[ ! -e "${matches[0]}" ]]; then
+    print_error "No $CONFIG_DIR/*.keymap found"
+    exit 1
+  fi
+
+  if [[ ${#matches[@]} -gt 1 ]]; then
+    print_error "More than one $CONFIG_DIR/*.keymap — every derived path is ambiguous"
+    printf '  %s\n' "${matches[@]}" >&2
+    exit 1
+  fi
+
+  local base="${matches[0]##*/}"
+  echo "${base%.keymap}"
+}
+
+keymap_path() { echo "$CONFIG_DIR/$1.keymap"; }
+drawer_yaml_path() { echo "${1}_keymap.yaml"; }
+drawer_svg_path() { echo "${1}_keymap.svg"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# build.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+get_target_count() {
+  yq '.include | length' "$BUILD_YAML"
+}
+
+get_board() {
+  yq -r ".include[$1].board" "$BUILD_YAML"
+}
+
+get_shield() {
+  yq -r ".include[$1].shield // \"\"" "$BUILD_YAML"
+}
+
+get_snippet() {
+  yq -r ".include[$1].snippet // \"\"" "$BUILD_YAML"
+}
+
+get_cmake_args() {
+  yq -r ".include[$1][\"cmake-args\"] // \"\"" "$BUILD_YAML"
+}
+
+get_artifact_name() {
+  yq -r ".include[$1][\"artifact-name\"] // \"\"" "$BUILD_YAML"
+}
+
+# artifact-name > first word of shield > board
+get_output_name() {
+  local board="$1" shield="$2" artifact_name="$3"
+
+  if [[ -n "$artifact_name" ]]; then
+    echo "$artifact_name"
+  elif [[ -n "$shield" ]]; then
+    echo "${shield%% *}"
+  else
+    echo "$board"
+  fi
+}
+
+list_output_names() {
+  local total i board shield artifact_name
+  total=$(get_target_count)
+  for ((i = 0; i < total; i++)); do
+    board=$(get_board "$i")
+    shield=$(get_shield "$i")
+    artifact_name=$(get_artifact_name "$i")
+    get_output_name "$board" "$shield" "$artifact_name"
+  done
+}
+
+check_requirements() {
+  if [[ ! -f "$BUILD_YAML" ]]; then
+    print_error "No $BUILD_YAML found in current directory."
+    print_info "Create a build.yaml with your board/shield configuration."
+    exit 1
+  fi
+
+  if [[ ! -d "$CONFIG_DIR" ]]; then
+    print_error "No $CONFIG_DIR/ directory found."
+    print_info "Your keymap and conf files should be in config/"
+    exit 1
+  fi
+
+  if [[ ! -f "$ZMK_SHARED_DIR/zephyr/module.yml" ]]; then
+    print_error "Shared behaviors module not found at $ZMK_SHARED_DIR"
+    print_info "Expected sibling 'shared/' directory with zephyr/module.yml"
+    print_info "Override with ZMK_SHARED_DIR environment variable"
+    exit 1
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Workspace
+# ─────────────────────────────────────────────────────────────────────────────
+
+# A different repo or an updated manifest both need a west update, and neither
+# announces itself.
+manifest_changed() {
+  local current_hash stored_hash=""
+  current_hash=$(md5sum "$(pwd)/$CONFIG_DIR/west.yml" 2>/dev/null | cut -d' ' -f1)
+  if [[ -f "$ZMK_WORKSPACE/.last_manifest_hash" ]]; then
+    stored_hash=$(cat "$ZMK_WORKSPACE/.last_manifest_hash")
+  fi
+  [[ "$current_hash" != "$stored_hash" ]]
+}
+
+save_manifest_hash() {
+  md5sum "$(pwd)/$CONFIG_DIR/west.yml" 2>/dev/null | cut -d' ' -f1 >"$ZMK_WORKSPACE/.last_manifest_hash"
+}
+
+# A workspace is several gigabytes of west checkout, so the move is a rename
+# rather than a re-download — both paths are under $HOME.
+migrate_legacy_workspace() {
+  local legacy
+  legacy="$ZMK_LEGACY_WORKSPACE_BASE/$(basename "$(pwd)")"
+
+  [[ -f "$legacy/.west/config" ]] || return 0
+  [[ ! -f "$ZMK_WORKSPACE/.west/config" ]] || return 0
+
+  print_info "Moving workspace out of $ZMK_LEGACY_WORKSPACE_BASE, now the install path"
+  mkdir -p "$(dirname "$ZMK_WORKSPACE")"
+  mv "$legacy" "$ZMK_WORKSPACE"
+  print_success "Workspace now at $ZMK_WORKSPACE"
+}
+
+ensure_workspace() {
+  local force_update="$1"
+
+  migrate_legacy_workspace
+  mkdir -p "$ZMK_WORKSPACE"
+
+  if [[ "$force_update" != "true" ]] && manifest_changed; then
+    print_info "Manifest changed — updating west dependencies"
+    force_update=true
+  fi
+
+  docker run --rm \
+    -v "$ZMK_WORKSPACE":"$CONTAINER_WORKSPACE" \
+    -v "$(pwd)/$CONFIG_DIR":"$CONTAINER_CONFIG" \
+    -w "$CONTAINER_WORKSPACE" \
+    "$DOCKER_IMAGE" \
+    /bin/bash -c "
+      if [ ! -f .west/config ]; then
+        echo 'Initializing shared ZMK workspace...'
+        west init -l config/
+        west update
+      elif [ '$force_update' = 'true' ]; then
+        echo 'Updating west dependencies...'
+        west update
+      fi
+    "
+
+  save_manifest_hash
+}
+
+build_target() {
+  local board="$1" shield="$2" output_name="$3" snippet="$4" cmake_args="$5" pristine="$6"
+  local build_dir="build/${output_name}"
+
+  local pristine_arg=""
+  if [[ "$pristine" == "true" ]]; then
+    pristine_arg="-p"
+  fi
+
+  local snippet_arg=""
+  if [[ -n "$snippet" ]]; then
+    snippet_arg="-S $snippet"
+  fi
+
+  local shield_arg=""
+  if [[ -n "$shield" ]]; then
+    shield_arg="-DSHIELD='${shield}'"
+  fi
+
+  local board_root_arg=""
+  if [[ -d "$(pwd)/boards" ]]; then
+    board_root_arg="-DBOARD_ROOT=${CONTAINER_OUTPUT}"
+  fi
+
+  # ZMK_EXTRA_MODULES, never ZEPHYR_EXTRA_MODULES: ZMK sets the latter itself to
+  # register its own board definitions, and a CLI -D clobbers that list, which
+  # surfaces as "No board named 'nice_nano' found".
+  docker run --rm \
+    -v "$ZMK_WORKSPACE":"$CONTAINER_WORKSPACE" \
+    -v "$(pwd)/$CONFIG_DIR":"$CONTAINER_CONFIG" \
+    -v "$(pwd)":"$CONTAINER_OUTPUT" \
+    -v "$ZMK_SHARED_DIR":"$CONTAINER_SHARED":ro \
+    -e "ZMK_CMAKE_ARGS=${cmake_args}" \
+    -w "$CONTAINER_WORKSPACE" \
+    "$DOCKER_IMAGE" \
+    /bin/bash -c "
+      export ZEPHYR_BASE=${CONTAINER_WORKSPACE}/zephyr
+
+      west build -s zmk/app -d ${build_dir} -b ${board} ${pristine_arg} ${snippet_arg} -- \
+        ${shield_arg} \
+        \${ZMK_CMAKE_ARGS} \
+        ${board_root_arg} \
+        -DZMK_CONFIG=${CONTAINER_CONFIG} \
+        -DZephyr_DIR=${CONTAINER_WORKSPACE}/zephyr/share/zephyr-package/cmake \
+        -DZMK_EXTRA_MODULES=${CONTAINER_SHARED}
+
+      cp ${build_dir}/zephyr/zmk.uf2 ${CONTAINER_OUTPUT}/${output_name}.uf2
+    "
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Verbs
+# ─────────────────────────────────────────────────────────────────────────────
+
+cmd_align() {
+  local stem keymap
+  stem=$(get_stem)
+  keymap=$(keymap_path "$stem")
+  keymap-align -k "$keymap"
+  print_success "$keymap aligned"
+}
+
+# Deliberately yaml -> svg only. `keymap parse` cannot read these keymaps: the
+# conditional-layers node holds layer defines rather than integers and there is
+# no flag to give the parser the shared include path, so it dies on
+# "invalid literal for int() with base 10". The yaml is therefore hand-written,
+# and `zmk check` is what stops it drifting from the keymap.
+cmd_draw() {
+  local stem yaml svg
+  stem=$(get_stem)
+  yaml=$(drawer_yaml_path "$stem")
+  svg=$(drawer_svg_path "$stem")
+
+  if [[ ! -f "$yaml" ]]; then
+    print_error "No $yaml — the drawer source is hand-written, not generated"
+    exit 1
+  fi
+
+  keymap -c "$DRAWER_CONFIG" draw "$yaml" >"$svg"
+  print_success "$svg generated"
+}
+
+cmd_build() {
+  local force_update=false pristine=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pristine | -p)
+        pristine=true
+        shift
+        ;;
+      --update)
+        force_update=true
+        shift
+        ;;
+      *)
+        print_error "Unknown option for build: $1"
+        exit 1
+        ;;
+    esac
+  done
+
+  check_requirements
+
+  print_header "ZMK Build" "blue"
+  print_info "Workspace: $ZMK_WORKSPACE"
+  print_info "Shared: $ZMK_SHARED_DIR"
+  print_info "Config: $(pwd)/$CONFIG_DIR"
+  [[ "$pristine" == "true" ]] && print_info "Mode: pristine (full rebuild)"
+  echo ""
+
+  ensure_workspace "$force_update"
+
+  local total
+  total=$(get_target_count)
+
+  if [[ "$total" -eq 0 ]]; then
+    print_error "No build targets found in $BUILD_YAML"
+    exit 1
+  fi
+
+  if ((total > 1)); then
+    print_info "Building $total targets in parallel"
+  else
+    print_info "Building $total target"
+  fi
+  echo ""
+
+  local start_time=$SECONDS
+  local pids=()
+  local log_files=()
+  local output_names=()
+
+  local i
+  for ((i = 0; i < total; i++)); do
+    local board shield snippet cmake_args artifact_name output_name log_file
+    board=$(get_board "$i")
+    shield=$(get_shield "$i")
+    snippet=$(get_snippet "$i")
+    cmake_args=$(get_cmake_args "$i")
+    artifact_name=$(get_artifact_name "$i")
+    output_name=$(get_output_name "$board" "$shield" "$artifact_name")
+    output_names+=("$output_name")
+
+    print_info "Starting: $output_name (board=$board${shield:+ shield=$shield})"
+
+    log_file=$(mktemp "/tmp/zmk-build-${output_name}-XXXX.log")
+    log_files+=("$log_file")
+
+    build_target "$board" "$shield" "$output_name" "$snippet" "$cmake_args" "$pristine" >"$log_file" 2>&1 &
+    pids+=($!)
+  done
+
+  echo ""
+
+  local failed=0
+  for ((i = 0; i < ${#pids[@]}; i++)); do
+    if wait "${pids[$i]}"; then
+      local size
+      size=$(du -h "${output_names[$i]}.uf2" 2>/dev/null | cut -f1)
+      print_success "${output_names[$i]}.uf2 ($size)"
+    else
+      print_error "${output_names[$i]} failed — log: ${log_files[$i]}"
+      tail -20 "${log_files[$i]}" 2>/dev/null
+      failed=1
+    fi
+  done
+
+  # Logs are kept on failure; that is the only time anyone wants them.
+  for ((i = 0; i < ${#log_files[@]}; i++)); do
+    if [[ "$failed" -eq 0 ]]; then
+      rm -f "${log_files[$i]}"
+    fi
+  done
+
+  echo ""
+
+  if [[ "$failed" -ne 0 ]]; then
+    print_error "Some builds failed"
+    exit 1
+  fi
+
+  local elapsed=$((SECONDS - start_time))
+  print_header "Build Complete" "green"
+  print_success "$total target(s) built in $((elapsed / 60))m $((elapsed % 60))s"
+  echo ""
+  ls -lh ./*.uf2 2>/dev/null || true
+}
+
+cmd_sync() {
+  cmd_align
+  cmd_draw
+  cmd_build "$@"
+}
+
+cmd_clean() {
+  local clean_all=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all)
+        clean_all=true
+        shift
+        ;;
+      *)
+        print_error "Unknown option for clean: $1"
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ "$clean_all" == "true" ]]; then
+    if [[ -d "$ZMK_WORKSPACE_BASE" ]]; then
+      print_warning "Removing all workspaces at $ZMK_WORKSPACE_BASE"
+      rm -rf "$ZMK_WORKSPACE_BASE"
+      print_success "All workspaces cleared. Next build will reinitialize."
+    else
+      print_info "No workspaces to clean at $ZMK_WORKSPACE_BASE"
+    fi
+    return 0
+  fi
+
+  rm -f ./*.uf2 2>/dev/null || true
+  if [[ -d "$ZMK_WORKSPACE" ]]; then
+    print_warning "Removing workspace at $ZMK_WORKSPACE"
+    rm -rf "$ZMK_WORKSPACE"
+  fi
+  print_success "Firmware and workspace cleared. Next build will reinitialize."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# check
+# ─────────────────────────────────────────────────────────────────────────────
+
+CHECK_ERRORS=0
+CHECK_WARNINGS=0
+
+check_fail() {
+  print_error "$1"
+  CHECK_ERRORS=$((CHECK_ERRORS + 1))
+}
+
+check_warn() {
+  print_warning "$1"
+  CHECK_WARNINGS=$((CHECK_WARNINGS + 1))
+}
+
+check_file() {
+  local path="$1" why="$2"
+  if [[ -f "$path" ]]; then
+    print_success "$path"
+  else
+    check_fail "$path missing — $why"
+  fi
+}
+
+# The check that earns this verb. The drawer yaml is hand-written, so a layer
+# added to the keymap does not reach the drawing and nothing says so — the SVG
+# renders cleanly, one layer short.
+check_layer_drift() {
+  local keymap="$1" yaml="$2"
+
+  if [[ ! -f "$keymap" || ! -f "$yaml" ]]; then
+    return
+  fi
+
+  local in_keymap in_yaml
+  in_keymap=$(grep -c 'display-name' "$keymap" || true)
+  in_yaml=$(yq '.layers | length' "$yaml" 2>/dev/null || echo 0)
+
+  if [[ "$in_keymap" == "$in_yaml" ]]; then
+    print_success "layers in sync ($in_keymap)"
+    return
+  fi
+
+  check_fail "layer drift — $keymap has $in_keymap, $yaml has $in_yaml"
+  print_info "  keymap: $(grep -o 'display-name = "[^"]*"' "$keymap" | sed 's/.*"\(.*\)"/\1/' | tr '\n' ' ')"
+  print_info "  drawn:  $(yq -r '.layers | keys | join(" ")' "$yaml" 2>/dev/null || echo '?')"
+}
+
+cmd_check() {
+  print_header "ZMK Check" "blue"
+
+  local stem
+  stem=$(get_stem)
+  print_info "Stem: $stem"
+  echo ""
+
+  print_section "Files"
+  check_file "$BUILD_YAML" "build targets are read from it"
+  check_file "$(keymap_path "$stem")" "the keymap is the repo"
+  check_file "$CONFIG_DIR/west.yml" "west resolves modules through it"
+  check_file "$DRAWER_CONFIG" "keymap-drawer reads it"
+  check_file "$ALIGN_CONFIG" "keymap-align reads it"
+  check_file "$(drawer_yaml_path "$stem")" "hand-written source for the drawing"
+
+  if [[ ! -f "$(drawer_svg_path "$stem")" ]]; then
+    check_warn "$(drawer_svg_path "$stem") missing — run 'zmk draw'"
+  else
+    print_success "$(drawer_svg_path "$stem")"
+  fi
+
+  echo ""
+  print_section "Layers"
+  check_layer_drift "$(keymap_path "$stem")" "$(drawer_yaml_path "$stem")"
+
+  echo ""
+  print_section "build.yaml"
+  local total i artifact
+  if total=$(get_target_count 2>/dev/null); then
+    if [[ "$total" -eq 0 ]]; then
+      check_fail "no targets in $BUILD_YAML"
+    else
+      print_success "$total target(s)"
+      for ((i = 0; i < total; i++)); do
+        artifact=$(get_artifact_name "$i")
+        if [[ -z "$artifact" ]]; then
+          check_warn "target $i has no artifact-name — its filename falls back to the shield or board"
+        fi
+      done
+    fi
+  else
+    check_fail "$BUILD_YAML does not parse"
+  fi
+
+  echo ""
+  print_section "Shared module"
+  if [[ -f "$ZMK_SHARED_DIR/zephyr/module.yml" ]]; then
+    print_success "$ZMK_SHARED_DIR"
+  else
+    check_fail "no zephyr/module.yml at $ZMK_SHARED_DIR"
+  fi
+
+  echo ""
+  print_section "Tools"
+  local tool
+  for tool in docker yq keymap-align keymap; do
+    if command -v "$tool" &>/dev/null; then
+      print_success "$tool"
+    else
+      check_fail "$tool not installed"
+    fi
+  done
+
+  echo ""
+  if [[ "$CHECK_ERRORS" -gt 0 ]]; then
+    print_error "$CHECK_ERRORS error(s), $CHECK_WARNINGS warning(s)"
+    exit 1
+  fi
+
+  if [[ "$CHECK_WARNINGS" -gt 0 ]]; then
+    print_warning "$CHECK_WARNINGS warning(s)"
+    exit 0
+  fi
+
+  print_success "Everything declared is present and in sync"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# flash
+#
+# A UF2 bootloader appears as a removable filesystem after a double-tap of the
+# reset button. Rather than matching a volume label — nice!nano says NICENANO,
+# other boards say something else — this snapshots what is already attached and
+# waits for whatever is new, then confirms INFO_UF2.TXT before writing to it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FLASH_TIMEOUT="${ZMK_FLASH_TIMEOUT:-60}"
+
+list_attached() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    find /Volumes -maxdepth 1 -mindepth 1 2>/dev/null | sort
+  else
+    lsblk -rno PATH,RM,FSTYPE 2>/dev/null | awk '$2 == 1 && $3 != "" { print $1 }' | sort
+  fi
+}
+
+mount_new_device() {
+  local device="$1"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "$device"
+    return 0
+  fi
+
+  local output
+  if ! output=$(udisksctl mount -b "$device" 2>&1); then
+    # Already mounted is not a failure — udisksctl says where in the same line.
+    if [[ "$output" != *"already mounted"* ]]; then
+      print_error "Could not mount $device: $output"
+      return 1
+    fi
+  fi
+
+  echo "$output" | sed 's/.* at //; s/\.$//'
+}
+
+wait_for_bootloader() {
+  local before="$1"
+  local elapsed=0 after new
+
+  while ((elapsed < FLASH_TIMEOUT)); do
+    after=$(list_attached)
+    new=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
+    if [[ -n "$new" ]]; then
+      echo "$new"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  return 1
+}
+
+flash_one() {
+  local uf2="$1"
+
+  if [[ ! -f "$uf2" ]]; then
+    print_error "$uf2 not found — run 'zmk build' first"
+    return 1
+  fi
+
+  local before
+  before=$(list_attached)
+
+  print_info "Double-tap reset on the half for ${uf2%.uf2} (${FLASH_TIMEOUT}s)"
+
+  local device
+  if ! device=$(wait_for_bootloader "$before"); then
+    print_error "No bootloader volume appeared within ${FLASH_TIMEOUT}s"
+    return 1
+  fi
+
+  local mountpoint
+  if ! mountpoint=$(mount_new_device "$device"); then
+    return 1
+  fi
+
+  if [[ ! -f "$mountpoint/INFO_UF2.TXT" ]]; then
+    print_error "$mountpoint has no INFO_UF2.TXT — that is not a UF2 bootloader"
+    return 1
+  fi
+
+  # The board reboots the instant the file lands, so the closing sync fails with
+  # an I/O error and cp exits non-zero. That is the flash succeeding.
+  cp "$uf2" "$mountpoint/" 2>/dev/null || true
+  sync 2>/dev/null || true
+
+  print_success "$uf2 written"
+}
+
+cmd_flash() {
+  local targets=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -*)
+        print_error "Unknown option for flash: $1"
+        exit 1
+        ;;
+      *)
+        targets+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ! -f "$BUILD_YAML" ]]; then
+    print_error "No $BUILD_YAML found in current directory."
+    exit 1
+  fi
+
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    if ! command -v fzf &>/dev/null; then
+      print_error "No target named and fzf is not installed"
+      print_info "Name one: $(list_output_names | tr '\n' ' ')"
+      exit 1
+    fi
+
+    local chosen
+    chosen=$(list_output_names | fzf --multi --prompt="flash > " --height=40% --reverse) || true
+
+    if [[ -z "$chosen" ]]; then
+      print_info "Nothing selected"
+      exit 0
+    fi
+
+    while IFS= read -r line; do
+      targets+=("$line")
+    done <<<"$chosen"
+  fi
+
+  print_header "ZMK Flash" "blue"
+
+  local target failed=0
+  for target in "${targets[@]}"; do
+    echo ""
+    if ! flash_one "${target%.uf2}.uf2"; then
+      failed=1
+    fi
+  done
+
+  echo ""
+  if [[ "$failed" -ne 0 ]]; then
+    print_error "Some halves were not flashed"
+    exit 1
+  fi
+
+  print_success "${#targets[@]} half/halves flashed"
+}
+
+do_self_update() {
+  if ! declare -F bashselfupdate_update &>/dev/null; then
+    print_error "zmk update failed: bashselfupdate is not installed"
+    print_info "Re-run the installer: bash $ZMK_APP_DIR/install.sh"
+    exit 1
+  fi
+
+  # Checked first because bashselfupdate_update returns the same non-zero for a
+  # development checkout, an unreachable remote and a repo with no releases, and
+  # "could not reach the remote" is misleading to someone running from a clone.
+  if ! bashselfupdate_current_version "$ZMK_APP_DIR" >/dev/null 2>&1; then
+    print_error "zmk update failed: $ZMK_APP_DIR is not on a release tag"
+    print_info "This is a development checkout. Use git to move it."
+    exit 1
+  fi
+
+  local moved
+  if ! moved=$(bashselfupdate_update "$ZMK_APP_DIR"); then
+    print_error "zmk update failed: could not reach the remote or find a release"
+    exit 1
+  fi
+
+  if [[ -z "$moved" ]]; then
+    print_success "zmk already at latest: $(bashselfupdate_describe "$ZMK_APP_DIR")"
+  else
+    print_success "zmk updated to $moved"
+  fi
+}
+
+show_help() {
+  help_header "zmk" "Build, draw, check and flash a ZMK keyboard config."
+  help_usage "zmk <command> [options]"
+
+  help_section "Commands"
+  help_row "build" "[--pristine] [--update]" "Build every target in build.yaml"
+  help_row "flash" "[target...]" "Write firmware to a half; picks with fzf when unnamed"
+  help_row "align" "" "Column-align the keymap"
+  help_row "draw" "" "Render the drawer yaml to SVG"
+  help_row "sync" "[build options]" "align, then draw, then build"
+  help_row "check" "" "Report what is missing or has drifted"
+  help_row "clean" "[--all]" "Remove firmware and this repo's workspace"
+  help_row "update" "" "Update zmk itself to the latest release"
+
+  help_section "Options"
+  help_row "--version" "" "Show the running version"
+  help_row "--help" "" "Show this help message"
+
+  help_section "Description"
+  help_text \
+    "  Runs against the keyboard config repo in the current directory. Every" \
+    "  path derives from the single config/*.keymap, so a repo names itself" \
+    "  once: config/corne.keymap gives corne_keymap.yaml and corne_keymap.svg." \
+    "" \
+    "  Builds use a per-repo workspace under ~/.local/share/zmk/<repo>/, so" \
+    "  different ZMK versions do not interfere. They are incremental by" \
+    "  default and run in parallel across targets." \
+    "" \
+    "  The sibling shared/ directory is bind-mounted into the build, so a" \
+    "  change there takes effect without a commit. CI has no bind-mount and" \
+    "  resolves it through config/west.yml — push shared before the board repo."
+
+  help_section "build.yaml Fields"
+  help_row "board" "" "Required. The board name."
+  help_row "shield" "" "Optional. Shield name(s)."
+  help_row "snippet" "" "Optional. Zephyr snippet to include."
+  help_row "cmake-args" "" "Optional. Extra CMake arguments."
+  help_row "artifact-name" "" "Optional. Custom output filename."
+
+  help_section "Requirements"
+  help_text \
+    "  - Docker, yq, keymap-align, keymap (keymap-drawer)" \
+    "  - build.yaml and config/ in the current directory" \
+    "  - Sibling shared/ directory (or ZMK_SHARED_DIR env var)" \
+    "  - fzf for the flash picker, and udisks2 on Linux"
+
+  help_section "Examples"
+  help_row "zmk check" "" "# What is missing or drifted"
+  help_row "zmk sync" "" "# align + draw + build"
+  help_row "zmk flash" "" "# Pick halves, then flash each"
+  help_row "zmk flash corne_choc_left" "" "# Flash one by name"
+
+  help_end
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    show_help
+    exit 0
+  fi
+
+  local command="$1"
+  shift
+
+  case "$command" in
+    build) cmd_build "$@" ;;
+    flash) cmd_flash "$@" ;;
+    align) cmd_align "$@" ;;
+    draw) cmd_draw "$@" ;;
+    sync) cmd_sync "$@" ;;
+    check) cmd_check "$@" ;;
+    clean) cmd_clean "$@" ;;
+    update) do_self_update ;;
+    --version | -v) echo "zmk $(get_version)" ;;
+    --help | -h) show_help ;;
+    *)
+      print_error "Unknown command: $command"
+      show_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
