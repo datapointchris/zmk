@@ -534,9 +534,11 @@ def drawn_class(cell):
         return "none"
     return "transparent" if cell == "▽" else "a key"
 
+flat = lambda rows: [cell for row in rows for cell in row]
+
 for (_, body), (name, rows) in zip(blocks, layers.items()):
     km = [t.strip() for t in body.split("&") if t.strip()]
-    drawn = [cell for row in rows for cell in row]
+    drawn = flat(rows)
     if len(km) != len(drawn):
         print(f"size\t{name}\t{len(km)}\t{len(drawn)}")
         continue
@@ -547,6 +549,34 @@ for (_, body), (name, rows) in zip(blocks, layers.items()):
         declared = km_class(behavior)
         if declared != shown:
             print(f"cell\t{name}\t{position}\t&{behavior.split()[0]}\t{declared}\t{shown}")
+
+# Which key reaches which layer. Both sides of this are invisible to the class
+# comparison above: a hold label and a held marker are still "a key", so a layer
+# that moves to a different thumb draws itself onto the old one and nothing says
+# so. The keymap is the authority — every &mo and layer-tap on the base layer
+# names the layer it opens.
+base_name, base_rows = next(iter(layers.items()))
+base_km = [t.strip() for t in blocks[0][1].split("&") if t.strip()]
+base_drawn = flat(base_rows)
+
+activators = {}
+for position, behavior in enumerate(base_km):
+    m = re.match(r"(?:mo|lt[lr]t?b?)\s+([A-Z_][A-Z_0-9]*)", behavior)
+    if m:
+        activators.setdefault(m.group(1), []).append(position)
+
+for layer, positions in activators.items():
+    for position in positions:
+        cell = base_drawn[position]
+        shown = cell.get("h") if isinstance(cell, dict) else (cell if isinstance(cell, str) else None)
+        if shown != layer:
+            print(f"hold\t{base_name}\t{position}\t{layer}\t{shown or '(nothing)'}")
+
+    if layer not in layers:
+        continue
+    marked = [i for i, c in enumerate(flat(layers[layer])) if isinstance(c, dict) and c.get("type") == "held"]
+    if not set(marked) & set(positions):
+        print(f"marker\t{layer}\t{','.join(str(p) for p in positions)}\t{','.join(str(m) for m in marked) or '(none)'}")
 PY
   ) || {
     rm -f "$layers_json"
@@ -570,6 +600,8 @@ PY
         ;;
       size) check_fail "$layer: keymap has $position keys, drawing has $behavior" ;;
       cell) check_fail "$layer position $position: keymap $behavior is $declared, drawing shows $shown" ;;
+      hold) check_fail "$layer position $position opens $behavior, drawing labels it $declared" ;;
+      marker) check_fail "$layer is reached from position $position, but its drawing marks $behavior held" ;;
     esac
   done <<<"$findings"
 }
