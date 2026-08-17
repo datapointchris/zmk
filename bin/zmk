@@ -876,19 +876,47 @@ do_self_update() {
   fi
 }
 
+# name|args|description. The one place a command's synopsis is written, so a
+# command added here answers --help without a second entry anywhere.
+ZMK_COMMANDS=(
+  "build|[--pristine] [--update]|Build every target in build.yaml"
+  "flash|[target...]|Write firmware to a half; picks with fzf when unnamed"
+  "align||Column-align the keymap"
+  "draw||Render the drawer yaml to SVG"
+  "sync|[build options]|align, then draw, then build"
+  "check||Report what is missing or has drifted"
+  "clean|[--all]|Remove firmware and this repo's workspace"
+  "update||Update zmk itself to the latest release"
+)
+
+# Answers `zmk <command> --help`. Plain echo rather than the help_* helpers, so
+# it still prints when formatting.sh is not installed.
+verb_help() {
+  local verb="$1" row name args description
+  for row in "${ZMK_COMMANDS[@]}"; do
+    IFS='|' read -r name args description <<<"$row"
+    if [[ "$name" == "$verb" ]]; then
+      echo "Usage: zmk $name${args:+ $args}"
+      echo ""
+      echo "  $description"
+      echo ""
+      echo "Every command: zmk --help"
+      return 0
+    fi
+  done
+  show_help
+}
+
 show_help() {
   help_header "zmk" "Build, draw, check and flash a ZMK keyboard config."
   help_usage "zmk <command> [options]"
 
   help_section "Commands"
-  help_row "build" "[--pristine] [--update]" "Build every target in build.yaml"
-  help_row "flash" "[target...]" "Write firmware to a half; picks with fzf when unnamed"
-  help_row "align" "" "Column-align the keymap"
-  help_row "draw" "" "Render the drawer yaml to SVG"
-  help_row "sync" "[build options]" "align, then draw, then build"
-  help_row "check" "" "Report what is missing or has drifted"
-  help_row "clean" "[--all]" "Remove firmware and this repo's workspace"
-  help_row "update" "" "Update zmk itself to the latest release"
+  local row name args description
+  for row in "${ZMK_COMMANDS[@]}"; do
+    IFS='|' read -r name args description <<<"$row"
+    help_row "$name" "$args" "$description"
+  done
 
   help_section "Options"
   help_row "--version" "" "Show the running version"
@@ -935,6 +963,21 @@ main() {
   if [[ $# -eq 0 ]]; then
     show_help
     exit 0
+  fi
+
+  # Every command answers --help rather than ignoring it and running. Otherwise
+  # `zmk align --help` rewrites the keymap, `zmk draw --help` overwrites the SVG,
+  # and `zmk sync --help` does both and then builds. Scanned across every
+  # argument because these commands take flags, and none takes free text where
+  # --help could be a real value.
+  if [[ "$1" != "--help" && "$1" != "-h" ]]; then
+    local arg
+    for arg in "$@"; do
+      if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        verb_help "$1"
+        exit 0
+      fi
+    done
   fi
 
   local command="$1"
