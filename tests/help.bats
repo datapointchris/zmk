@@ -8,7 +8,12 @@
 # the guard rather than the commands.
 #
 # Only the per-command path is covered. The full screen goes through the help_*
-# helpers from formatting.sh, which a CI runner does not have.
+# helpers from formatting.sh, whose real output is the dotfiles library's to test.
+#
+# bin/zmk exits 1 at source time when formatting.sh is absent, which a CI runner
+# always is, so setup writes a stub. It defines the help_* grammar as no-ops:
+# verb_help prints with plain echo and needs none of it, and stubbing beats
+# skipping because the guard then runs on the runner rather than only here.
 
 load "$HOME/.local/lib/bats-support/load.bash"
 load "$HOME/.local/lib/bats-assert/load.bash"
@@ -16,6 +21,20 @@ load "$HOME/.local/lib/bats-assert/load.bash"
 setup() {
   ZMK="$(cd "$BATS_TEST_DIRNAME/.." && pwd)/bin/zmk"
   export ZMK
+
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.local/shell"
+  cat >"$HOME/.local/shell/formatting.sh" <<'STUB'
+help_header() { :; }
+help_usage() { :; }
+help_section() { :; }
+help_row() { :; }
+help_text() { :; }
+help_end() { :; }
+print_error() { echo "$*" >&2; }
+print_success() { echo "$*"; }
+print_info() { echo "$*"; }
+STUB
 }
 
 @test "every command in the table answers --help with its own usage" {
