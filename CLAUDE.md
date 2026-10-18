@@ -23,11 +23,11 @@ Every code path past `check_requirements` runs Docker and takes minutes, so the 
 is a build:
 
 ```sh
-cd ~/code/zmk/corne42 && zmk build
+cd <config-repo> && zmk build
 ```
 
-`~/code/zmk/shared` is the Zephyr module bind-mounted into the container, and `~/code/zmk/corne42`,
-`glove80` and `piantor` are the configs that consume it.
+The Zephyr module is the sibling `shared/` directory, bind-mounted into the container. Each
+keyboard's config repo sits beside it and consumes it.
 
 ## Two flag traps, both learned the hard way
 
@@ -45,9 +45,9 @@ build directory; it does not re-download the west workspace.
 directory name would share a workspace and thrash `west update` between them. That has not
 happened, and is the thing to remember before renaming a config repo.
 
-It lived at `~/.local/share/zmk/` until v2, which is now where the tool's own clone installs. Both
-the tool and the installer move a workspace they find at the old path rather than letting the clone
-remove several gigabytes of west checkout.
+`~/.local/share/zmk/` is where the tool's own clone installs, so no workspace may live there. Both
+the tool and the installer move a workspace they find there to the cache path. Letting the clone
+replace it would remove several gigabytes of west checkout.
 
 ## `draw` renders, it does not parse
 

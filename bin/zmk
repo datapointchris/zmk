@@ -40,8 +40,8 @@ if [[ -f "$BASHSELFUPDATE_LOAD" ]]; then
 fi
 
 # A west workspace is a rebuildable checkout, so it is cache rather than data.
-# It also had to move: ~/.local/share/zmk is where this tool's own clone now
-# installs, and the installer removes a non-repo directory it finds there.
+# It stays out of ~/.local/share/zmk, where this tool's own clone installs and
+# the installer removes a non-repo directory it finds.
 ZMK_WORKSPACE_BASE="${XDG_CACHE_HOME:-$HOME/.cache}/zmk"
 ZMK_LEGACY_WORKSPACE_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/zmk"
 ZMK_WORKSPACE="${ZMK_WORKSPACE:-${ZMK_WORKSPACE_BASE}/$(basename "$(pwd)")}"
