@@ -681,7 +681,7 @@ cmd_check() {
   echo ""
   print_section "Tools"
   local tool
-  for tool in docker yq keymap-align keymap; do
+  for tool in docker yq python3 keymap-align keymap; do
     if command -v "$tool" &>/dev/null; then
       print_success "$tool"
     else
@@ -954,7 +954,7 @@ show_help() {
 
   help_section "Requirements"
   help_text \
-    "  - Docker, yq, keymap-align, keymap (keymap-drawer)" \
+    "  - Docker, yq, python3, keymap-align, keymap (keymap-drawer)" \
     "  - build.yaml and config/ in the current directory" \
     "  - Sibling shared/ directory (or ZMK_SHARED_DIR env var)" \
     "  - fzf for the flash picker, and udisks2 on Linux"

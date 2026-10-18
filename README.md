@@ -166,8 +166,9 @@ purpose: a toggle is pressed and released, so it has no hold legend and its labe
 text. Labels are not compared otherwise, since the drawing chooses its own.
 
 `check` also confirms every file in the table above, that `build.yaml` parses and has targets, that
-the shared module is present, and that `docker`, `yq`, `keymap-align` and `keymap` are installed. A
-missing SVG and a target without `artifact-name` are warnings, which exit 0. Any error exits 1.
+the shared module is present, and that `docker`, `yq`, `python3`, `keymap-align` and `keymap` are
+installed. A missing SVG and a target without `artifact-name` are warnings, which exit 0. Any error
+exits 1.
 
 ## `flash` — whatever volume appears next, confirmed as a bootloader before the write
 
