@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# `zmk <command> --help`, for every command.
+# `zmk --help`, and `zmk <command> --help` for every command.
 #
 # The flag was ignored and the command ran. In a keyboard config directory that
 # means `zmk align --help` rewrites the keymap, `zmk draw --help` overwrites the
@@ -7,13 +7,8 @@
 # a directory, and the guard exits before any path is resolved, so these assert
 # the guard rather than the commands.
 #
-# Only the per-command path is covered. The full screen goes through the help_*
-# helpers from formatting.sh, whose real output is the dotfiles library's to test.
-#
-# bin/zmk exits 1 at source time when formatting.sh is absent, which a CI runner
-# always is, so setup writes a stub. It defines the help_* grammar as no-ops:
-# verb_help prints with plain echo and needs none of it, and stubbing beats
-# skipping because the guard then runs on the runner rather than only here.
+# HOME is empty, so no formatting library is found and every screen prints
+# through zmk's own plain fallbacks, as it does on a machine without one.
 
 load "$HOME/.local/lib/bats-support/load.bash"
 load "$HOME/.local/lib/bats-assert/load.bash"
@@ -21,51 +16,24 @@ load "$HOME/.local/lib/bats-assert/load.bash"
 setup() {
   ZMK="$(cd "$BATS_TEST_DIRNAME/.." && pwd)/bin/zmk"
   export ZMK
-
   export HOME="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$HOME/.local/shell"
-  cat >"$HOME/.local/shell/formatting.sh" <<'STUB'
-help_header() { :; }
-help_usage() { :; }
-help_section() { :; }
-help_row() { :; }
-help_text() { :; }
-help_end() { :; }
-print_error() { echo "$*" >&2; }
-print_success() { echo "$*"; }
-print_info() { echo "$*"; }
-STUB
+  mkdir -p "$HOME"
 }
 
-@test "every command in the table answers --help with its own usage" {
-  local name
-  while IFS='|' read -r name _; do
-    [[ -n "$name" ]] || continue
-    run "$ZMK" "$name" --help
-    [[ "$status" -eq 0 ]] || fail "zmk $name --help exited $status: $output"
-    [[ "${lines[0]}" == "Usage: zmk $name"* ]] || fail "zmk $name --help said: ${lines[0]}"
-  done < <(sed -n '/^ZMK_COMMANDS=(/,/^)/p' "$ZMK" | sed -n 's/^  "\(.*\)"$/\1/p')
+commands() {
+  sed -n '/^ZMK_COMMANDS=(/,/^)/p' "$ZMK" | sed -n 's/^  "\(.*\)"$/\1/p'
 }
 
-@test "every command answers -h the same way" {
-  local name
-  while IFS='|' read -r name _; do
-    [[ -n "$name" ]] || continue
-    run "$ZMK" "$name" -h
-    [[ "$status" -eq 0 ]] || fail "zmk $name -h exited $status: $output"
-  done < <(sed -n '/^ZMK_COMMANDS=(/,/^)/p' "$ZMK" | sed -n 's/^  "\(.*\)"$/\1/p')
-}
-
-@test "a command with arguments shows them" {
-  run "$ZMK" build --help
-  assert_success
-  assert_line --index 0 "Usage: zmk build [--pristine] [--update]"
-}
-
-@test "a command with no arguments shows none" {
-  run "$ZMK" align --help
-  assert_success
-  assert_line --index 0 "Usage: zmk align"
+@test "every command answers --help and -h with its own usage and description" {
+  local name args description flag
+  while IFS='|' read -r name args description; do
+    for flag in --help -h; do
+      run "$ZMK" "$name" "$flag"
+      [[ "$status" -eq 0 ]] || fail "zmk $name $flag exited $status: $output"
+      [[ "${lines[0]}" == "Usage: zmk $name${args:+ $args}" ]] || fail "zmk $name $flag said: ${lines[0]}"
+      [[ "$output" == *"$description"* ]] || fail "zmk $name $flag left out: $description"
+    done
+  done < <(commands)
 }
 
 @test "the flag is caught after another flag, not only in first position" {
@@ -76,15 +44,12 @@ STUB
   assert_line --index 0 "Usage: zmk build [--pristine] [--update]"
 }
 
-@test "the description comes through" {
-  run "$ZMK" sync --help
+@test "the full help lists every command in the table once" {
+  run "$ZMK" --help
   assert_success
-  assert_output --partial "align, then draw, then build"
-}
-
-@test "the table is the only place a command is listed" {
-  # show_help loops the same array, so a command added to one is in both. This
-  # fails if someone reintroduces a hardcoded help_row beside the loop.
-  run grep -c '^  help_row "build"' "$ZMK"
-  assert_output "0"
+  local name
+  while IFS='|' read -r name _; do
+    [[ $(grep -c "^  $name " <<<"$output") -eq 1 ]] || fail "zmk --help lists $name other than once:
+$output"
+  done < <(commands)
 }

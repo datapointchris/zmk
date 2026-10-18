@@ -93,6 +93,5 @@ The tool was called `zmk-build` until v2, and the installer removes that symlink
 finds them. It also moves any west workspace it finds at `~/.local/share/zmk/` into the cache
 first, because that path is now where the tool itself installs.
 
-Help output is rendered with the shell formatting library from
-[dotfiles](https://github.com/datapointchris/dotfiles), sourced from `~/.local/shell/` when it is
-present.
+Help and status lines are styled by a shell formatting library at `~/.local/shell/formatting.sh`
+where one is installed. Without it, zmk prints the same lines unstyled.
