@@ -924,6 +924,15 @@ verb_help() {
 show_help() {
   help_header "zmk" "Build, draw, check and flash a ZMK keyboard config."
   help_usage "zmk <command> [options]"
+  help_text \
+    "" \
+    "  After a keymap change, run zmk check, then zmk sync, then zmk flash." \
+    "  check is the only command that sees a drawing the keymap has left" \
+    "  behind. draw renders the hand-written drawer yaml as it stands, and" \
+    "  succeeds whether or not it still matches the keymap." \
+    "" \
+    "  When a build fails the same way after a CMake flag changed, run" \
+    "  zmk build --pristine. The old flag stays in the build cache until then."
 
   help_section "Commands"
   local row name args description
