@@ -73,16 +73,17 @@ get_version() {
 # that there is exactly one, since two would make every derived path ambiguous.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Called as $(get_stem), so its errors go to stderr or the substitution eats them.
 get_stem() {
   local matches=("$CONFIG_DIR"/*.keymap)
 
   if [[ ! -e "${matches[0]}" ]]; then
-    print_error "No $CONFIG_DIR/*.keymap found"
+    print_error "No $CONFIG_DIR/*.keymap found" >&2
     exit 1
   fi
 
   if [[ ${#matches[@]} -gt 1 ]]; then
-    print_error "More than one $CONFIG_DIR/*.keymap — every derived path is ambiguous"
+    print_error "More than one $CONFIG_DIR/*.keymap — every derived path is ambiguous" >&2
     printf '  %s\n' "${matches[@]}" >&2
     exit 1
   fi
