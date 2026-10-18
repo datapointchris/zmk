@@ -173,11 +173,18 @@ check_requirements() {
 # Workspace
 # ─────────────────────────────────────────────────────────────────────────────
 
+# cksum because POSIX specifies it, so every macOS release ships it, where
+# md5sum arrived only with a recent one. Spotting a changed manifest needs no
+# cryptographic hash.
+manifest_hash() {
+  cksum <"$(pwd)/$CONFIG_DIR/west.yml"
+}
+
 # A different repo or an updated manifest both need a west update, and neither
 # announces itself.
 manifest_changed() {
   local current_hash stored_hash=""
-  current_hash=$(md5sum "$(pwd)/$CONFIG_DIR/west.yml" 2>/dev/null | cut -d' ' -f1)
+  current_hash=$(manifest_hash 2>/dev/null)
   if [[ -f "$ZMK_WORKSPACE/.last_manifest_hash" ]]; then
     stored_hash=$(cat "$ZMK_WORKSPACE/.last_manifest_hash")
   fi
@@ -185,7 +192,7 @@ manifest_changed() {
 }
 
 save_manifest_hash() {
-  md5sum "$(pwd)/$CONFIG_DIR/west.yml" 2>/dev/null | cut -d' ' -f1 >"$ZMK_WORKSPACE/.last_manifest_hash"
+  manifest_hash >"$ZMK_WORKSPACE/.last_manifest_hash"
 }
 
 # A workspace is several gigabytes of west checkout, so the move is a rename
