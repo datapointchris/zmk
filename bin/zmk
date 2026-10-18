@@ -936,7 +936,7 @@ show_help() {
     "  path derives from the single config/*.keymap, so a repo names itself" \
     "  once: config/corne.keymap gives corne_keymap.yaml and corne_keymap.svg." \
     "" \
-    "  Builds use a per-repo workspace under ~/.local/share/zmk/<repo>/, so" \
+    "  Builds use a per-repo workspace under ~/.cache/zmk/<repo>/, so" \
     "  different ZMK versions do not interfere. They are incremental by" \
     "  default and run in parallel across targets." \
     "" \
