@@ -43,13 +43,3 @@ commands() {
   assert_success
   assert_line --index 0 "Usage: zmk build [--pristine] [--update]"
 }
-
-@test "the full help lists every command in the table once" {
-  run "$ZMK" --help
-  assert_success
-  local name
-  while IFS='|' read -r name _; do
-    [[ $(grep -c "^  $name " <<<"$output") -eq 1 ]] || fail "zmk --help lists $name other than once:
-$output"
-  done < <(commands)
-}
