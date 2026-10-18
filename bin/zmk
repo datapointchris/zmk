@@ -302,11 +302,9 @@ cmd_align() {
   print_success "$keymap aligned"
 }
 
-# Deliberately yaml -> svg only. `keymap parse` cannot read these keymaps: the
-# conditional-layers node holds layer defines rather than integers and there is
-# no flag to give the parser the shared include path, so it dies on
-# "invalid literal for int() with base 10". The yaml is therefore hand-written,
-# and `zmk check` is what stops it drifting from the keymap.
+# Deliberately yaml -> svg only. The yaml is hand-written and carries labels the
+# keymap does not: ZOOM where `keymap parse` writes the binding, &tmux_zoom.
+# `zmk check` is what stops the yaml drifting from the keymap.
 cmd_draw() {
   local stem yaml svg
   stem=$(get_stem)
