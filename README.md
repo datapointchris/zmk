@@ -160,9 +160,9 @@ layer with the drawing's `layers` entry in the same position, and reports four k
 - a key that holds a layer open, drawn with a hold legend other than that layer's name;
 - a layer whose drawing marks none of the keys that open it as `{type: held}`.
 
-The keys that hold a layer open are `&mo`, `&magic`, and the `ltl` and `ltr` layer-taps with their
-`t` and `b` variants, as zmk-shared defines them. ZMK's stock `&lt` is not among them. `&tog` is
-left out on purpose: a toggle is pressed and released, so it has no hold legend and its label is free
+The keys that hold a layer open are `&mo`, `&magic`, ZMK's stock `&lt`, and the `ltl` and `ltr`
+layer-taps with their `t` and `b` variants, as zmk-shared defines them. `&tog` is left out on
+purpose: a toggle is pressed and released, so it has no hold legend and its label is free
 text. Labels are not compared otherwise, since the drawing chooses its own.
 
 `check` also confirms every file in the table above, that `build.yaml` parses and has targets, that

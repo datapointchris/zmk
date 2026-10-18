@@ -564,13 +564,14 @@ for (_, body), (name, rows) in zip(blocks, layers.items()):
 # that moves to a different thumb draws itself onto the old one and nothing says
 # so. The keymap is the authority — every behavior that opens a layer names it.
 #
-# Momentary activators only: &mo, the layer-taps, and glove80's &magic. Those are
+# Momentary activators only: &mo, ZMK's stock &lt, the shared module's
+# ltl/ltr layer-taps with their t and b variants, and glove80's &magic. Those are
 # held, so keymap-drawer's convention applies and the cell carries the layer name
 # as its hold legend. &tog is deliberately excluded — a toggle is pressed and
 # released, so it has no hold legend and its label is free prose. "OS TOG" reads
 # better than OS_MAC_LAYER, and requiring the layer name there invents a
 # convention that does not exist.
-MOMENTARY = re.compile(r"(?:mo|magic|lt[lr]t?b?)\s+([A-Z_][A-Z_0-9]*)")
+MOMENTARY = re.compile(r"(?:mo|magic|lt(?:[lr]t?b?)?)\s+([A-Z_][A-Z_0-9]*)")
 
 reached_from = {}
 for (_, body), (name, rows) in zip(blocks, layers.items()):
