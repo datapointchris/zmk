@@ -298,7 +298,7 @@ cmd_align() {
   local stem keymap
   stem=$(get_stem)
   keymap=$(keymap_path "$stem")
-  keymap-align -k "$keymap"
+  keymap-align format -k "$keymap"
   print_success "$keymap aligned"
 }
 

@@ -17,7 +17,7 @@ belong to the config repo, and the shared behaviors belong to the module.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datapointchris/zmk/main/install.sh | bash
 uv tool install keymap-drawer                                        # `keymap`, which draw renders with
-uv tool install git+https://github.com/datapointchris/keymap-align   # keymap-align, which align runs
+uv tool install keymap-align                                         # keymap-align, which align runs
 zmk update                                                           # later: move to the newest release
 ```
 
