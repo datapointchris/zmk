@@ -210,18 +210,44 @@ migrate_legacy_workspace() {
   print_success "Workspace now at $ZMK_WORKSPACE"
 }
 
+# The image's default user is root, and everything it writes lands in the
+# bind-mounted workspace and config repo. Running as the caller keeps those
+# files theirs, so a rebuild can overwrite them and `zmk clean` can delete them.
+# That uid has no home in the image, and west, git and CMake each write under
+# HOME. The container's /tmp is writable by any user, and it is discarded with
+# the container, as root's home was.
+run_in_container() {
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
+    "$@"
+}
+
+# A build from before the container ran as the caller left root-owned files in
+# the workspace and beside the firmware, which the caller can neither overwrite
+# nor delete without sudo. A root container hands them back.
+reclaim_from_root() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 0
+  [[ -n "$(find "$dir" -user 0 -print -quit 2>/dev/null)" ]] || return 0
+  print_info "Handing root-owned files in $dir back to $(id -un)"
+  docker run --rm -v "$dir":/reclaim "$DOCKER_IMAGE" chown -R "$(id -u):$(id -g)" /reclaim
+}
+
 ensure_workspace() {
   local force_update="$1"
 
   migrate_legacy_workspace
   mkdir -p "$ZMK_WORKSPACE"
+  reclaim_from_root "$ZMK_WORKSPACE"
+  reclaim_from_root "$(pwd)"
 
   if [[ "$force_update" != "true" ]] && manifest_changed; then
     print_info "Manifest changed — updating west dependencies"
     force_update=true
   fi
 
-  docker run --rm \
+  run_in_container \
     -v "$ZMK_WORKSPACE":"$CONTAINER_WORKSPACE" \
     -v "$(pwd)/$CONFIG_DIR":"$CONTAINER_CONFIG" \
     -w "$CONTAINER_WORKSPACE" \
@@ -267,7 +293,7 @@ build_target() {
   # ZMK_EXTRA_MODULES, never ZEPHYR_EXTRA_MODULES: ZMK sets the latter itself to
   # register its own board definitions, and a CLI -D clobbers that list, which
   # surfaces as "No board named 'nice_nano' found".
-  docker run --rm \
+  run_in_container \
     -v "$ZMK_WORKSPACE":"$CONTAINER_WORKSPACE" \
     -v "$(pwd)/$CONFIG_DIR":"$CONTAINER_CONFIG" \
     -v "$(pwd)":"$CONTAINER_OUTPUT" \
@@ -452,6 +478,7 @@ cmd_clean() {
   if [[ "$clean_all" == "true" ]]; then
     if [[ -d "$ZMK_WORKSPACE_BASE" ]]; then
       print_warning "Removing all workspaces at $ZMK_WORKSPACE_BASE"
+      reclaim_from_root "$ZMK_WORKSPACE_BASE"
       rm -rf "$ZMK_WORKSPACE_BASE"
       print_success "All workspaces cleared. Next build will reinitialize."
     else
@@ -463,6 +490,7 @@ cmd_clean() {
   rm -f ./*.uf2 2>/dev/null || true
   if [[ -d "$ZMK_WORKSPACE" ]]; then
     print_warning "Removing workspace at $ZMK_WORKSPACE"
+    reclaim_from_root "$ZMK_WORKSPACE"
     rm -rf "$ZMK_WORKSPACE"
   fi
   print_success "Firmware and workspace cleared. Next build will reinitialize."
