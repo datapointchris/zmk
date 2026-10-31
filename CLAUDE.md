@@ -1,7 +1,6 @@
 # zmk - Claude Code Instructions
 
-Universal rules live in `~/.claude/CLAUDE.md` and are not restated here. Every shell edit keeps
-these conventions:
+Every shell edit keeps these conventions:
 
 - bash 3.2 is the floor, because macOS ships it: no `declare -A`, `mapfile`, `readarray` or
   `${var,,}`.

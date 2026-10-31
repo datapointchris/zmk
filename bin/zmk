@@ -215,7 +215,7 @@ migrate_legacy_workspace() {
 # files theirs, so a rebuild can overwrite them and `zmk clean` can delete them.
 # That uid has no home in the image, and west, git and CMake each write under
 # HOME. The container's /tmp is writable by any user, and it is discarded with
-# the container, as root's home was.
+# the container.
 run_in_container() {
   docker run --rm \
     --user "$(id -u):$(id -g)" \
@@ -223,9 +223,9 @@ run_in_container() {
     "$@"
 }
 
-# A build from before the container ran as the caller left root-owned files in
-# the workspace and beside the firmware, which the caller can neither overwrite
-# nor delete without sudo. A root container hands them back.
+# Files a root container wrote into the workspace or beside the firmware cannot
+# be overwritten or deleted by the caller without sudo. A root container hands
+# them back.
 reclaim_from_root() {
   local dir="$1"
   [[ -d "$dir" ]] || return 0
