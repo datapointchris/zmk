@@ -124,6 +124,20 @@ get_artifact_name() {
   yq -r ".include[$1][\"artifact-name\"] // \"\"" "$BUILD_YAML"
 }
 
+# The drawer yaml is read through these, each taking its path, as build.yaml is
+# read through the getters above.
+get_drawn_layers_json() {
+  yq -o=json '.layers' "$1"
+}
+
+get_drawn_layer_count() {
+  yq '.layers | length' "$1"
+}
+
+get_drawn_layer_names() {
+  yq -r '.layers | keys | join(" ")' "$1"
+}
+
 # artifact-name > first word of shield > board
 get_output_name() {
   local board="$1" shield="$2" artifact_name="$3"
@@ -541,7 +555,7 @@ check_layer_drift() {
 
   local layers_json findings
   layers_json=$(mktemp "/tmp/zmk-layers-XXXX.json")
-  if ! yq -o=json '.layers' "$yaml" >"$layers_json" 2>/dev/null; then
+  if ! get_drawn_layers_json "$yaml" >"$layers_json" 2>/dev/null; then
     rm -f "$layers_json"
     check_fail "$yaml has no readable .layers"
     return
@@ -643,7 +657,7 @@ PY
   rm -f "$layers_json"
 
   if [[ -z "$findings" ]]; then
-    print_success "$(yq '.layers | length' "$yaml") layers, every key agrees with the keymap"
+    print_success "$(get_drawn_layer_count "$yaml") layers, every key agrees with the keymap"
     return
   fi
 
@@ -653,7 +667,7 @@ PY
       count)
         check_fail "layer drift — keymap has $layer, drawing has $position"
         print_info "  keymap: $(grep -o 'display-name = "[^"]*"' "$keymap" | sed 's/.*"\(.*\)"/\1/' | tr '\n' ' ')"
-        print_info "  drawn:  $(yq -r '.layers | keys | join(" ")' "$yaml" 2>/dev/null || echo '?')"
+        print_info "  drawn:  $(get_drawn_layer_names "$yaml" 2>/dev/null || echo '?')"
         ;;
       size) check_fail "$layer: keymap has $position keys, drawing has $behavior" ;;
       cell) check_fail "$layer position $position: keymap $behavior is $declared, drawing shows $shown" ;;

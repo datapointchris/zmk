@@ -48,6 +48,20 @@ happened, and is the thing to remember before renaming a config repo.
 the tool and the installer move a workspace they find there to the cache path. Letting the clone
 replace it would remove several gigabytes of west checkout.
 
+## `yq` and the build container each have one door
+
+Every `yq` read goes through a getter. The `get_*` functions under `build.yaml` read the build
+targets, and the `get_drawn_*` functions read the drawer yaml. A new read gets a getter beside
+them.
+
+Every container that builds or updates the workspace starts through `run_in_container`, which runs
+it as the caller with `HOME=/tmp`. `reclaim_from_root` is the one `docker run` outside it. It runs
+as the image's root on purpose, because only root can hand root-owned files back to the caller.
+
+The other tools zmk drives each run from one place: `keymap-align` in `cmd_align`, `keymap` in
+`cmd_draw`, `udisksctl` in `mount_new_device`, and `python3` in the symlink resolution at the top of
+`bin/zmk` and in `check_layer_drift`.
+
 ## `draw` renders, it does not parse
 
 The drawer YAML is hand-written, with labels the keymap does not carry, and `draw` only renders it
