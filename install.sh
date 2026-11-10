@@ -134,9 +134,14 @@ if [[ -d "$HOME/.local/share/zmk-build/.git" ]]; then
   success "Removed the zmk-build clone it replaced"
 fi
 
-for dependency in docker yq; do
-  if ! command -v "$dependency" &>/dev/null; then
-    error "$dependency is not installed — zmk needs it to build firmware"
+# tool|what zmk uses it for. python3 is needed before any command runs, because
+# zmk resolves its own symlink with it.
+for dependency in \
+  "docker|to build firmware" \
+  "yq|to read build.yaml and the drawing" \
+  "python3|to resolve its own symlink and compare the drawing to the keymap"; do
+  if ! command -v "${dependency%%|*}" &>/dev/null; then
+    error "${dependency%%|*} is not installed — zmk needs it ${dependency#*|}"
   fi
 done
 
