@@ -558,8 +558,13 @@ blocks = re.findall(
 )
 layers = json.load(open(sys.argv[2]))
 
+# Fields are joined on the ASCII unit separator, which bash's read does not
+# collapse the way it collapses runs of a tab, so an empty field keeps its place.
+def row(*fields):
+    print("\x1f".join(str(field) for field in fields))
+
 if len(blocks) != len(layers):
-    print(f"count\t{len(blocks)}\t{len(layers)}")
+    row("count", len(blocks), len(layers))
     raise SystemExit
 
 def km_class(token):
@@ -582,7 +587,7 @@ for (_, body), (name, rows) in zip(blocks, layers.items()):
     km = [t.strip() for t in body.split("&") if t.strip()]
     drawn = flat(rows)
     if len(km) != len(drawn):
-        print(f"size\t{name}\t{len(km)}\t{len(drawn)}")
+        row("size", name, len(km), len(drawn))
         continue
     for position, (behavior, cell) in enumerate(zip(km, drawn)):
         shown = drawn_class(cell)
@@ -590,7 +595,7 @@ for (_, body), (name, rows) in zip(blocks, layers.items()):
             continue
         declared = km_class(behavior)
         if declared != shown:
-            print(f"cell\t{name}\t{position}\t&{behavior.split()[0]}\t{declared}\t{shown}")
+            row("cell", name, position, "&" + behavior.split()[0], declared, shown)
 
 # Which key reaches which layer. Both sides of this are invisible to the class
 # comparison above: a hold label and a held marker are still "a key", so a layer
@@ -620,7 +625,7 @@ for (_, body), (name, rows) in zip(blocks, layers.items()):
         cell = drawn[position]
         shown = cell.get("h") if isinstance(cell, dict) else (cell if isinstance(cell, str) else None)
         if shown != target:
-            print(f"hold\t{name}\t{position}\t{target}\t{shown or '(nothing)'}")
+            row("hold", name, position, target, shown or "")
         reached_from.setdefault(target, []).append(position)
 
 for layer, positions in reached_from.items():
@@ -628,7 +633,7 @@ for layer, positions in reached_from.items():
         continue
     marked = [i for i, c in enumerate(flat(layers[layer])) if isinstance(c, dict) and c.get("type") == "held"]
     if not set(marked) & set(positions):
-        print(f"marker\t{layer}\t{','.join(str(p) for p in sorted(set(positions)))}\t{','.join(str(m) for m in marked) or '(none)'}")
+        row("marker", layer, ",".join(str(p) for p in sorted(set(positions))), ",".join(str(m) for m in marked))
 PY
   ) || {
     rm -f "$layers_json"
@@ -643,7 +648,7 @@ PY
   fi
 
   local kind layer position behavior declared shown
-  while IFS=$'\t' read -r kind layer position behavior declared shown; do
+  while IFS=$'\x1f' read -r kind layer position behavior declared shown; do
     case "$kind" in
       count)
         check_fail "layer drift — keymap has $layer, drawing has $position"
@@ -652,8 +657,8 @@ PY
         ;;
       size) check_fail "$layer: keymap has $position keys, drawing has $behavior" ;;
       cell) check_fail "$layer position $position: keymap $behavior is $declared, drawing shows $shown" ;;
-      hold) check_fail "$layer position $position opens $behavior, drawing labels it $declared" ;;
-      marker) check_fail "$layer is reached from position $position, but its drawing marks $behavior held" ;;
+      hold) check_fail "$layer position $position opens $behavior, drawing labels it ${declared:-(nothing)}" ;;
+      marker) check_fail "$layer is reached from position $position, but its drawing marks ${behavior:-(none)} held" ;;
     esac
   done <<<"$findings"
 }
