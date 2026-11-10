@@ -25,13 +25,22 @@ mkdir -p "$BIN_DIR"
 # zmk-build, and the clone below removes whatever non-repo it finds here. Each
 # workspace is a rebuildable checkout, so it belongs in cache anyway; both paths
 # are under $HOME, which makes the move a rename rather than a re-download.
+#
+# A repo whose workspace already sits in the cache keeps that one, as the tool
+# itself does: mv cannot replace a non-empty directory, and under set -e its
+# failure would stop the install before the clone.
 migrate_legacy_workspaces() {
   [[ -d "$INSTALL_DIR" ]] || return 0
   [[ ! -d "$INSTALL_DIR/.git" ]] || return 0
 
-  local workspace moved=0
+  local workspace name moved=0 kept=0
   for workspace in "$INSTALL_DIR"/*/; do
     [[ -f "$workspace/.west/config" ]] || continue
+    name="$(basename "$workspace")"
+    if [[ -f "$WORKSPACE_DIR/$name/.west/config" ]]; then
+      kept=$((kept + 1))
+      continue
+    fi
     mkdir -p "$WORKSPACE_DIR"
     mv "$workspace" "$WORKSPACE_DIR/"
     moved=$((moved + 1))
@@ -39,6 +48,9 @@ migrate_legacy_workspaces() {
 
   if [[ "$moved" -gt 0 ]]; then
     success "Moved $moved build workspace(s) to $WORKSPACE_DIR"
+  fi
+  if [[ "$kept" -gt 0 ]]; then
+    info "Kept $kept workspace(s) already in $WORKSPACE_DIR; the copies under $INSTALL_DIR are removed with it"
   fi
 }
 
