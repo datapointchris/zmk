@@ -1086,6 +1086,18 @@ main() {
   local command="$1"
   shift
 
+  # One stderr line, at most once a day, when a newer release exists. It reads
+  # the same checkout and the same remote as `zmk update`, so the release it
+  # names is the one `update` installs. It never fails and never prints an
+  # error; `zmk update` is where update failures surface. A script parses
+  # --version, and `update` reports the release itself.
+  if declare -F bashselfupdate_notify &>/dev/null; then
+    case "$command" in
+      update | --version | -v) ;;
+      *) bashselfupdate_notify zmk "$ZMK_APP_DIR" ;;
+    esac
+  fi
+
   case "$command" in
     build) cmd_build "$@" ;;
     flash) cmd_flash "$@" ;;

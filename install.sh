@@ -74,8 +74,8 @@ install_bashselfupdate() {
   bashselfupdate_checkout_latest "$dir" >/dev/null
 }
 
-# Not fatal. zmk builds firmware without it — only `zmk update` needs it, and
-# that degrades to an actionable error.
+# Not fatal. zmk builds firmware without it. `zmk update` degrades to an
+# actionable error, and the newer-release notice is not shown.
 info "Installing bashselfupdate..."
 if install_bashselfupdate; then
   success "bashselfupdate installed"

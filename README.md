@@ -23,8 +23,9 @@ zmk update                                                           # later: mo
 
 The installer clones zmk to `~/.local/share/zmk/` at its newest release tag and links `bin/zmk` into
 `~/.local/bin/`. `ZMK_INSTALL_DIR` and `ZMK_BIN_DIR` move either one. It also clones bashselfupdate
-into `~/.local/lib/`, which only `zmk update` needs. Re-running the installer moves the clone to the
-newest release, as `zmk update` does. `zmk update` refuses in a development clone, which sits on no
+into `~/.local/lib/`, which `zmk update` needs. With it, any other command run in a terminal prints
+one line on stderr, at most once a day, when a newer release exists. Re-running the installer moves
+the clone to the newest release, as `zmk update` does. `zmk update` refuses in a development clone, which sits on no
 release tag.
 
 The installer replaces a directory at the install path that is not a git clone. Any west workspace
