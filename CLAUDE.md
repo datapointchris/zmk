@@ -5,9 +5,9 @@ Every shell edit keeps these conventions:
 - bash 3.2 is the floor, because macOS ships it: no `declare -A`, `mapfile`, `readarray` or
   `${var,,}`.
 - `set -euo pipefail` heads every executable script.
-- shfmt formats as `.editorconfig` configures it, and never by flags, since a flag discards the
-  file's settings wholesale.
-- shellcheck and the bats suite in `tests/` run on every commit.
+
+`.pre-commit-config.yaml` runs shellcheck, shfmt and the bats suite in `tests/` on every commit,
+and its comments say why shfmt takes no formatting flags.
 
 ## Dev vs installed
 
