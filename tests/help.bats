@@ -1,11 +1,10 @@
 #!/usr/bin/env bats
 # `zmk --help`, and `zmk <command> --help` for every command.
 #
-# The flag was ignored and the command ran. In a keyboard config directory that
-# means `zmk align --help` rewrites the keymap, `zmk draw --help` overwrites the
-# SVG, and `zmk sync --help` does both and then builds. Nothing here runs in such
-# a directory, and the guard exits before any path is resolved, so these assert
-# the guard rather than the commands.
+# Every command answers the flag with its own usage instead of running. The
+# comment on that guard in `main` names what each command would do otherwise.
+# Nothing here runs in a keyboard config directory, and the guard exits before
+# any path is resolved, so these assert the guard rather than the commands.
 #
 # HOME is empty, so no formatting library is found and every screen prints
 # through zmk's own plain fallbacks, as it does on a machine without one.
