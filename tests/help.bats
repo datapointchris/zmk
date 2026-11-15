@@ -25,8 +25,11 @@ commands() {
 }
 
 @test "every command answers --help and -h with its own usage and description" {
-  local name args description flag
-  while IFS='|' read -r name args description; do
+  local name args description example flag
+  while IFS='|' read -r name args description example; do
+    # A command reached by tab-completion is read without the root help, so its
+    # own screen carries a command to copy.
+    [[ "$example" == "zmk $name"* ]] || fail "zmk $name has no example of its own: '$example'"
     for flag in --help -h; do
       run "$ZMK" "$name" "$flag"
       [[ "$status" -eq 0 ]] || fail "zmk $name $flag exited $status: $output"

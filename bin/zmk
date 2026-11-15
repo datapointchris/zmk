@@ -968,28 +968,31 @@ do_self_update() {
   fi
 }
 
-# name|args|description. The one place a command's synopsis is written, so a
-# command added here answers --help without a second entry anywhere.
+# name|args|description|example. The one place a command's synopsis is written,
+# so a command added here answers --help without a second entry anywhere.
 ZMK_COMMANDS=(
-  "build|[--pristine] [--update]|Build every target in build.yaml"
-  "flash|[target...]|Flash each named half, or pick halves with fzf"
-  "align||Column-align the keymap"
-  "draw||Render the drawer yaml to SVG"
-  "sync|[build options]|align, then draw, then build"
-  "check||Report what is missing or has drifted"
-  "clean|[--all]|Remove firmware and this repo's workspace"
-  "update||Update zmk itself to the latest release"
+  "build|[--pristine] [--update]|Build every target in build.yaml|zmk build --pristine"
+  "flash|[target...]|Flash each named half, or pick halves with fzf|zmk flash corne_left corne_right"
+  "align||Column-align the keymap|zmk align"
+  "draw||Render the drawer yaml to SVG|zmk draw"
+  "sync|[build options]|align, then draw, then build|zmk sync --pristine"
+  "check||Report what is missing or has drifted|zmk check"
+  "clean|[--all]|Remove firmware and this repo's workspace|zmk clean"
+  "update||Update zmk itself to the latest release|zmk update"
 )
 
 # Answers `zmk <command> --help` with that command's row of the table alone.
 verb_help() {
-  local verb="$1" row name args description
+  local verb="$1" row name args description example
   for row in "${ZMK_COMMANDS[@]}"; do
-    IFS='|' read -r name args description <<<"$row"
+    IFS='|' read -r name args description example <<<"$row"
     if [[ "$name" == "$verb" ]]; then
       echo "Usage: zmk $name${args:+ $args}"
       echo ""
       echo "  $description"
+      echo ""
+      echo "Example:"
+      echo "  $example"
       echo ""
       echo "Every command: zmk --help"
       return 0
@@ -1014,7 +1017,7 @@ show_help() {
   help_section "Commands"
   local row name args description
   for row in "${ZMK_COMMANDS[@]}"; do
-    IFS='|' read -r name args description <<<"$row"
+    IFS='|' read -r name args description _ <<<"$row"
     help_row "$name" "$args" "$description"
   done
 
