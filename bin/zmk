@@ -962,6 +962,18 @@ cmd_flash() {
     done <<<"$chosen"
   fi
 
+  # A name build.yaml does not produce never gets a .uf2 from `zmk build`, so
+  # it is refused with the names that do, before any half waits on a bootloader.
+  local known name unknown=0
+  known=$(list_output_names)
+  for name in "${targets[@]}"; do
+    if ! grep -Fxq -- "${name%.uf2}" <<<"$known"; then
+      print_error "No target ${name%.uf2} in $BUILD_YAML; targets: ${known//$'\n'/ }"
+      unknown=1
+    fi
+  done
+  [[ "$unknown" -eq 0 ]] || exit 1
+
   print_header "ZMK Flash" "blue"
 
   local target failed=0
