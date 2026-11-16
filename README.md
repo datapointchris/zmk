@@ -36,7 +36,10 @@ disagree about the verbs.
 zmk also needs these on `PATH`:
 
 - `git` clones zmk and bashselfupdate, and the installer stops without it.
-- Docker, runnable without sudo, builds the firmware.
+- Docker, runnable without sudo, builds the firmware. `build` stops before any workspace step when
+  the daemon is down or refuses the user.
+- keymap-align runs in `align`, and keymap-drawer's `keymap` runs in `draw`. Each command stops
+  with the `uv tool install` line above when its tool is missing.
 - mikefarah's `yq` reads `build.yaml` and the drawing.
 - `python3` resolves the installed symlink and compares the drawing to the keymap.
 - `fzf` is the flash picker.
