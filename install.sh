@@ -14,7 +14,13 @@ info() { echo "[info] $*"; }
 success() { echo "[ok] $*"; }
 error() { echo "[error] $*" >&2; }
 
-if ! command -v git &>/dev/null; then
+# The installer runs before bin/zmk is on disk, so it keeps its own copy of the
+# tool's PATH probe, and every probe here goes through it.
+tool_installed() {
+  command -v "$1" &>/dev/null
+}
+
+if ! tool_installed git; then
   error "git is required but not installed"
   exit 1
 fi
@@ -140,12 +146,12 @@ for dependency in \
   "docker|to build firmware" \
   "yq|to read build.yaml and the drawing" \
   "python3|to resolve its own symlink and compare the drawing to the keymap"; do
-  if ! command -v "${dependency%%|*}" &>/dev/null; then
+  if ! tool_installed "${dependency%%|*}"; then
     error "${dependency%%|*} is not installed — zmk needs it ${dependency#*|}"
   fi
 done
 
-if command -v zmk &>/dev/null; then
+if tool_installed zmk; then
   info "Run 'zmk --help' to get started"
 else
   info "Add $BIN_DIR to your PATH, then run 'zmk --help'"
