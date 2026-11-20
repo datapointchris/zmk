@@ -1028,17 +1028,19 @@ do_self_update() {
   fi
 }
 
-# name|args|description|example. The one place a command's synopsis is written,
-# so a command added here answers --help without a second entry anywhere.
+# name|args|description|example|options. The one place a command's synopsis is
+# written, so a command added here answers --help without a second entry
+# anywhere. options holds one entry per flag or argument, separated by ';', each
+# written as its name, '=', then what it does.
 ZMK_COMMANDS=(
-  "build|[--pristine] [--update]|Build every target in build.yaml|zmk build --pristine"
-  "flash|[target...]|Flash each named half, or pick halves with fzf|zmk flash corne_left corne_right"
-  "align||Column-align the keymap|zmk align"
-  "draw||Render the drawer yaml to SVG|zmk draw"
-  "sync|[build options]|align, then draw, then build|zmk sync --pristine"
-  "check||Report what is missing or has drifted|zmk check"
-  "clean|[--all]|Remove firmware and this repo's workspace|zmk clean"
-  "update||Update zmk itself to the latest release|zmk update"
+  "build|[--pristine] [--update]|Build every target in build.yaml|zmk build --pristine|--pristine, -p=Rebuild from scratch, discarding the build cache a changed CMake flag stays in;--update=Run west update even though config/west.yml is unchanged"
+  "flash|[target...]|Flash each named half, or pick halves with fzf|zmk flash corne_left corne_right|target=A firmware name from build.yaml. With none, fzf offers every one"
+  "align||Column-align the keymap|zmk align|"
+  "draw||Render the drawer yaml to SVG|zmk draw|"
+  "sync|[build options]|align, then draw, then build|zmk sync --pristine|--pristine, -p=Rebuild from scratch, discarding the build cache a changed CMake flag stays in;--update=Run west update even though config/west.yml is unchanged"
+  "check||Report what is missing or has drifted|zmk check|"
+  "clean|[--all]|Remove firmware and this repo's workspace|zmk clean|--all=Remove every repo's workspace under the cache directory, not just this one"
+  "update||Update zmk itself to the latest release|zmk update|"
 )
 
 # The command names from the table, space-separated, for an error to list.
@@ -1052,14 +1054,23 @@ command_names() {
 
 # Answers `zmk <command> --help` with that command's row of the table alone.
 verb_help() {
-  local verb="$1" row name args description example
+  local verb="$1" row name args description example options entry
+  local -a entries
   for row in "${ZMK_COMMANDS[@]}"; do
-    IFS='|' read -r name args description example <<<"$row"
+    IFS='|' read -r name args description example options <<<"$row"
     if [[ "$name" == "$verb" ]]; then
       echo "Usage: zmk $name${args:+ $args}"
       echo ""
       echo "  $description"
       echo ""
+      if [[ -n "$options" ]]; then
+        echo "Options:"
+        IFS=';' read -r -a entries <<<"$options"
+        for entry in "${entries[@]}"; do
+          printf '  %-16s %s\n' "${entry%%=*}" "${entry#*=}"
+        done
+        echo ""
+      fi
       echo "Example:"
       echo "  $example"
       echo ""
