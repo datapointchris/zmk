@@ -1122,6 +1122,11 @@ show_help() {
     "  - Sibling shared/ directory (or ZMK_SHARED_DIR env var)" \
     "  - fzf for the flash picker, and udisks2 on Linux"
 
+  help_section "Environment"
+  help_row "ZMK_WORKSPACE" "" "Build workspace for this repo (default \${XDG_CACHE_HOME:-~/.cache}/zmk/<repo>)"
+  help_row "ZMK_SHARED_DIR" "" "Shared behaviors module to bind-mount (default ../shared)"
+  help_row "ZMK_FLASH_TIMEOUT" "" "Seconds flash waits for each half's bootloader (default 60)"
+
   help_section "Examples"
   help_row "zmk check" "" "# What is missing or drifted"
   help_row "zmk sync" "" "# align + draw + build"
